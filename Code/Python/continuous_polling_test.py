@@ -554,8 +554,9 @@ class Controller:
 
     # ----- main loop ------------------------------------------------------
     def _status_line(self, force):
+        # Note: target and last_msg are still written to the CSV; they're just
+        # omitted from the terminal status line for readability.
         f_str = "----" if force is None else f"{force:6.2f}"
-        tgt = self._state_target()
         elapsed_total = time.monotonic() - self.t0
         wall = dt.datetime.now().strftime("%H:%M:%S")
         extra = ""
@@ -567,8 +568,7 @@ class Controller:
         flags = " [PAUSED]" if self.paused else ""
         return (
             f"{wall} t={elapsed_total:6.2f}s  [{self.state.value:<17}] "
-            f"force={f_str} N  target={tgt:6.2f} N  "
-            f"last={self.last_msg:<10}{extra}{flags}"
+            f"force={f_str} N{extra}{flags}"
         )
 
     def _print_status_inplace(self, force):

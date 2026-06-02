@@ -411,12 +411,14 @@ class Controller:
     def _state_target(self) -> float:
         """What Python wants the Teensy's targetForce to be in the current state.
 
-        During RELEASE the Teensy is in manual mode (continuous 'u'), so this
-        value is just for the CSV/status line — it is not sent to the Teensy.
+        SEEKING_CONTACT uses the full --target-force so the proportional path
+        runs at its fastest (~125 steps/sec); --contact-threshold is only used
+        by Python to decide when to advance to RAMPING_TO_TARGET. During
+        RELEASE the Teensy is in manual mode (continuous 'u'), so this value
+        is just for the CSV/status line — it is not sent to the Teensy.
         """
-        if self.state == State.SEEKING_CONTACT:
-            return self.args.contact_threshold
         if self.state in (
+            State.SEEKING_CONTACT,
             State.RAMPING_TO_TARGET,
             State.HOLDING_FORCE,
             State.TIMED_RUN,
@@ -439,8 +441,12 @@ class Controller:
         self._print(f"[state] {prev.value} -> {new_state.value}  (force={f_str} N)")
 
         if new_state == State.SEEKING_CONTACT:
-            self.send_target(self.args.contact_threshold)
+            # Use full target so proportional runs at max rate; Python advances
+            # to RAMPING_TO_TARGET as soon as force >= contact_threshold.
+            self.send_target(self.args.target_force)
         elif new_state == State.RAMPING_TO_TARGET:
+            # Target unchanged from SEEKING_CONTACT, but re-send for robustness
+            # in case the user's first 'g' resume hit during seek.
             self.send_target(self.args.target_force)
         elif new_state == State.HOLDING_FORCE:
             pass  # one-tick latch; we'll advance to TIMED_RUN next call

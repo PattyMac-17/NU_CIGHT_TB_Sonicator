@@ -1,6 +1,19 @@
 //DM332T Switch Settings (SW1:SW2:SW3:SW4:SW5:SW6) -> 0 = off, 1 = on
 //v1 -> 101111; v2 -> 101011
 
+// ---------------------------------------------------------------------------
+// Serial protocol (driven by the Python supervisor on the Raspberry Pi):
+//   "<float>\n"   -> measured force value. Runs proportional control toward
+//                    the current targetForce. Sets manualMode = false.
+//   "T<float>\n"  -> set targetForce. Does not change mode.
+//   'u'           -> manual mode, continuous upward steps until next command.
+//   'd'           -> manual mode, continuous downward steps until next command.
+//   's'           -> manual mode, stop.
+// Safety: in automatic mode, motion auto-halts within 100 ms if Python stops
+// streaming force values (lastForceTime watchdog). In manual mode, time-limiting
+// of u/d is enforced on the Python side (jog auto-stop) since there is no
+// homing or limit switch on the lead-screw ram.
+// ---------------------------------------------------------------------------
 
 String incoming = "";
 float forceValue = 0.0;
@@ -28,7 +41,7 @@ unsigned long stepInterval = 50; //hold the computed step interval here (millise
 
 void setup() {
   Serial.begin(115200);
-  targetForce = 30.0;
+  targetForce = 0.0;  // Python must explicitly set target via "T<value>\n" before any auto motion
 
   pinMode(DIR_Pin, OUTPUT);
   pinMode(STEP_Pin, OUTPUT);
@@ -46,13 +59,19 @@ void loop() {
       return;
     }
     if (c == '\n'){
-      forceValue = incoming.toFloat();
-
-      currentForce = forceValue;
-      forceError = targetForce - currentForce;
-      stepInterval = constrain((unsigned long)(Kp_step / (abs(forceError) + 0.01)), minStepInterval, maxStepInterval);
-      lastForceTime = millis();
-      manualMode = false;
+      if (incoming.length() > 0) {  // guard: stray '\n' with empty buffer used to silently re-enter auto mode at 0.0 N
+        if (incoming.charAt(0) == 'T') {
+          // "T<float>\n" -> set target only, do not touch mode or watchdog
+          targetForce = incoming.substring(1).toFloat();
+        } else {
+          forceValue = incoming.toFloat();
+          currentForce = forceValue;
+          forceError = targetForce - currentForce;
+          stepInterval = constrain((unsigned long)(Kp_step / (abs(forceError) + 0.01)), minStepInterval, maxStepInterval);
+          lastForceTime = millis();
+          manualMode = false;
+        }
+      }
       incoming = "";
       }
     else{

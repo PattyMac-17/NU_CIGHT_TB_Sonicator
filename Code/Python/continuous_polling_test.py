@@ -58,14 +58,11 @@ DEFAULT_MARK10_BAUD = 115200
 DEFAULT_LOOP_HZ = 30.0
 DEFAULT_CONTACT_THRESHOLD = 1.0  # N: contact detected when force exceeds this
 DEFAULT_TARGET_REACHED = 1.0  # N: tolerance for advancing past ramping_to_target
-DEFAULT_RELEASE_TARGET = (
-    -1.0
-)  # N: below at-rest so Teensy drives upward via proportional
-DEFAULT_RELEASE_DURATION = 0.5  # s: hard time cap on release motion
+DEFAULT_RELEASE_DURATION = 0.5  # s: hard time cap on manual upward release
 DEFAULT_JOG_DURATION_MS = 50  # ms: manual u/d auto-stop window
 DEFAULT_MAX_FORCE = 50.0  # N: hard safety cap
+DEFAULT_MAX_OVERSHOOT = 5.0  # N: fault if force exceeds target + this while holding/timed_run
 DEFAULT_MAX_PARSE_FAILS = 20  # consecutive force-gauge parse failures -> fault
-STATUS_PRINT_EVERY = 10  # print a status line every N ticks (~3 Hz at 30 Hz loop)
 CSV_FLUSH_EVERY = 30  # flush CSV every N rows (~1 s at 30 Hz loop)
 
 
@@ -89,7 +86,9 @@ AUTOMATIC_STATES = frozenset(
         State.RAMPING_TO_TARGET,
         State.HOLDING_FORCE,
         State.TIMED_RUN,
-        State.RELEASE,
+        # RELEASE intentionally not here: it uses manual 'u' continuous mode,
+        # so Python must not stream force values that would put the Teensy
+        # back into automatic mode mid-release.
     }
 )
 
@@ -288,16 +287,10 @@ def parse_args(argv=None) -> argparse.Namespace:
         help="Tolerance (N) for advancing past ramping_to_target.",
     )
     p.add_argument(
-        "--release-target",
-        type=float,
-        default=DEFAULT_RELEASE_TARGET,
-        help="Target (N) sent to Teensy during release; below at-rest drives up slowly.",
-    )
-    p.add_argument(
         "--release-duration",
         type=float,
         default=DEFAULT_RELEASE_DURATION,
-        help="Maximum seconds of upward motion during release.",
+        help="Seconds of upward motion (manual mode) during the end-of-run release.",
     )
     p.add_argument(
         "--jog-duration-ms",
@@ -316,6 +309,13 @@ def parse_args(argv=None) -> argparse.Namespace:
         "--force-override",
         action="store_true",
         help="Allow --target-force > --max-force. DANGEROUS.",
+    )
+    p.add_argument(
+        "--max-overshoot",
+        type=float,
+        default=DEFAULT_MAX_OVERSHOOT,
+        help="Fault if force exceeds (target + this) while holding/timed_run. "
+             "Catches a mis-flashed Teensy that doesn't honor T<value> commands.",
     )
     p.add_argument(
         "--max-parse-fails",
@@ -409,7 +409,11 @@ class Controller:
 
     # ----- helpers --------------------------------------------------------
     def _state_target(self) -> float:
-        """What Python wants the Teensy's targetForce to be in the current state."""
+        """What Python wants the Teensy's targetForce to be in the current state.
+
+        During RELEASE the Teensy is in manual mode (continuous 'u'), so this
+        value is just for the CSV/status line — it is not sent to the Teensy.
+        """
         if self.state == State.SEEKING_CONTACT:
             return self.args.contact_threshold
         if self.state in (
@@ -418,12 +422,13 @@ class Controller:
             State.TIMED_RUN,
         ):
             return self.args.target_force
-        if self.state == State.RELEASE:
-            return self.args.release_target
         return self._teensy_target
 
     def _print(self, msg: str):
-        sys.stdout.write(msg + "\n")
+        # Break out of the in-place status line (\r) so transition/log messages
+        # appear on their own lines, then leave the cursor ready for the next
+        # in-place status update.
+        sys.stdout.write("\r\x1b[K" + msg + "\n")
         sys.stdout.flush()
 
     # ----- state transitions ---------------------------------------------
@@ -445,7 +450,10 @@ class Controller:
                 f"[timed_run] hold clock started; runtime = {self.args.runtime:.1f} s"
             )
         elif new_state == State.RELEASE:
-            self.send_target(self.args.release_target)
+            # Manual 'u' continuous: ~1240 steps/sec, far faster than the
+            # proportional path (~125 steps/sec) so 0.5 s actually relieves a
+            # compressed sample. Also works on stock firmware that ignores T.
+            self.send_manual("u")
             self.release_clock.start()
         elif new_state == State.MANUAL_READY:
             self.send_manual("s")
@@ -508,6 +516,8 @@ class Controller:
 
         if self.state == State.RELEASE:
             if self.release_clock.elapsed() >= self.args.release_duration:
+                # Belt-and-suspenders: explicit 's' before MANUAL_READY also sends one.
+                self.send_manual("s")
                 self._enter_state(State.MANUAL_READY, force)
             return
 
@@ -546,16 +556,26 @@ class Controller:
     def _status_line(self, force):
         f_str = "----" if force is None else f"{force:6.2f}"
         tgt = self._state_target()
+        elapsed_total = time.monotonic() - self.t0
+        wall = dt.datetime.now().strftime("%H:%M:%S")
         extra = ""
         if self.state == State.TIMED_RUN and not self.paused:
-            extra = f"  hold={self.run_clock.elapsed():5.1f}/{self.args.runtime:.1f}s"
+            extra = f"  hold={self.run_clock.elapsed():5.2f}/{self.args.runtime:.1f}s"
         elif self.state == State.RELEASE and not self.paused:
-            extra = f"  rel={self.release_clock.elapsed():4.2f}/{self.args.release_duration:.2f}s"
+            extra = (f"  rel={self.release_clock.elapsed():4.2f}"
+                     f"/{self.args.release_duration:.2f}s")
         flags = " [PAUSED]" if self.paused else ""
         return (
-            f"[{self.state.value:<18}] force={f_str} N  target={tgt:6.2f} N  "
+            f"{wall} t={elapsed_total:6.2f}s  [{self.state.value:<17}] "
+            f"force={f_str} N  target={tgt:6.2f} N  "
             f"last={self.last_msg:<10}{extra}{flags}"
         )
+
+    def _print_status_inplace(self, force):
+        # Pad to a fixed width so shorter status lines fully overwrite previous
+        # longer ones; \r returns to column 0 of the same terminal line.
+        sys.stdout.write("\r" + self._status_line(force).ljust(140))
+        sys.stdout.flush()
 
     def run(self):
         period = 1.0 / self.args.loop_hz
@@ -590,6 +610,19 @@ class Controller:
                         self._enter_fault(
                             f"over-force {force:.2f} N > {self.args.max_force} N cap"
                         )
+                    # Overshoot guard: while holding force, the Teensy proportional
+                    # control should keep us within ~0.1 N of target. A large
+                    # excursion above target most often means the Teensy firmware
+                    # is the old version that ignores T-commands and is still
+                    # driving toward its compiled-in target.
+                    elif self.state in (State.HOLDING_FORCE, State.TIMED_RUN):
+                        ceiling = self.args.target_force + self.args.max_overshoot
+                        if force > ceiling:
+                            self._enter_fault(
+                                f"force {force:.2f} N > target+overshoot "
+                                f"{ceiling:.2f} N (is the Teensy flashed with the "
+                                f"latest firmware?)"
+                            )
 
             # 3) State machine (one-shot messages emitted via _enter_state)
             self.advance_state(force)
@@ -620,8 +653,9 @@ class Controller:
                 self.paused,
             )
             self._tick += 1
-            if self._tick % STATUS_PRINT_EVERY == 0:
-                self._print(self._status_line(force))
+            # Continuous in-place status update every tick; transitions/log
+            # messages use _print() which breaks out to a fresh line.
+            self._print_status_inplace(force)
             # last_msg is "this tick's message"; reset for next tick
             self.last_msg = ""
 

@@ -9,8 +9,8 @@ and manual-ready. The Teensy keeps doing the proportional control loop the user
 has already validated; Python is the supervisor.
 
 Example launch (over SSH on the Pi):
-    python3 Code/Python/continuous_polling_test.py --runtime 60 --target-force 30
-    python3 Code/Python/continuous_polling_test.py --runtime 300 --target-force 25
+    python3 launch.py --runtime 60 --target-force 30
+    python3 launch.py --runtime 300 --target-force 25
 
 Required arguments: --runtime (hold time in seconds after target is reached) and
 --target-force (Newtons). All other parameters have sensible defaults; see --help.

@@ -17,7 +17,7 @@ product.
 > For the full clinical background and design rationale, see the
 > [capstone final report](BME390%20Capstone%20Final%20Report%20W2026.pdf).
 
-> **See it in action:** a [short demo video](https://youtu.be/PqH8Qrmt4ng) showing closed-loop force control and remote operation over SSH.
+> **See it in action:** a [short demo video](https://youtu.be/yJS70YkuPZo) showing closed-loop force control and remote operation over SSH.
 
 ---
 

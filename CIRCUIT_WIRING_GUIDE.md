@@ -74,8 +74,8 @@ This document summarizes the wiring connections needed to assemble the project e
 |---|---|
 | Stepper Driver ENA | Not used / left blank |
 | Stepper Driver OPTO | Teensy 4.1 3.3V |
-| Stepper Driver DIR | Teensy 4.1 Pin 3 |
-| Stepper Driver PUL | Teensy 4.1 Pin 2 |
+| Stepper Driver DIR | Teensy 4.1 Pin 36 |
+| Stepper Driver PUL | Teensy 4.1 Pin 34 |
 
 ## Stepper Motor Photoelectric Sensor to Teensy 4.1
 

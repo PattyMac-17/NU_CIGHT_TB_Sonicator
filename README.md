@@ -17,6 +17,8 @@ product.
 > For the full clinical background and design rationale, see the
 > [capstone final report](BME390%20Capstone%20Final%20Report%20W2026.pdf).
 
+> **See it in action:** a [short demo video](https://youtu.be/PqH8Qrmt4ng) showing closed-loop force control and remote operation over SSH.
+
 ---
 
 ## Repository layout
@@ -145,7 +147,8 @@ state, and pause status.
 **Built and validated.** The frame and sonicator mount are built to spec; the Pi, Teensy,
 stepper driver, and motor communicate reliably on the shared supply, and the relay and digital
 potentiometer have been integrated and exercised. Force is held in closed loop within ~1 N of
-target.
+target — see the [demo video](https://youtu.be/PqH8Qrmt4ng) for closed-loop force control and
+remote operation over SSH.
 
 **Remaining work:**
 - **Finish electrical integration** — move off the breadboard to thicker-gauge wiring with
